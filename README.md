@@ -12,7 +12,8 @@ Firmware Download Procedure
 
 3、Select the COM port, configure the settings as shown in the picture, then click START to begin downloading. Wait until the download is complete, then press the RST button to run normally.
 
-<img width="650" height="676" alt="image" src="https://github.com/user-attachments/assets/aca0dea2-f43c-4af3-b069-00ca01646d20" />
+<img width="757" height="675" alt="image" src="https://github.com/user-attachments/assets/cd624401-6ef6-4268-b44b-055dae3fa166" />
+
 
 Main Firmware Modification Workflow
 
