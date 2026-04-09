@@ -16,102 +16,180 @@ Firmware Download Procedure
 
 
 Bruce Firmware Adaptation Guide for M5Stack Cardputer with External CC1101 / NRF24L01 / LoRa Modules
+
 This document summarizes the complete modification process for adding support for the following modules to Bruce firmware on M5Stack Cardputer:
 
 .CC1101
+
 .NRF24L01
+
 .LoRa
+
 .Keyboard I2C pin multiplexing
+
 .SPI device conflict avoidance
+
 The core idea of this solution is:
 
+
 1.Modify boards/m5stack-cardputer/m5stack-cardputer.ini to add external module pin definitions
+
 2.Modify boards/m5stack-cardputer/interface.cpp to implement keyboard I2C and external pin multiplexing
+
 3.Modify src/modules/NRF24/nrf_common.cpp to release the CC1101 chip select before initializing NRF24, preventing SPI bus conflicts
 
+
 1. Files to Modify
+   
 The following files need to be edited:
+
     boards/m5stack-cardputer/m5stack-cardputer.ini
+    
     boards/m5stack-cardputer/interface.cpp
+    
     src/modules/NRF24/nrf_common.cpp
-2. Notes Before Modification
-3. In this solution, some Cardputer pins are reused for multiple functions, so pay special attention to the following points.
+    
+3. Notes Before Modification
+   
+4. In this solution, some Cardputer pins are reused for multiple functions, so pay special attention to the following points.
+   
 ------------------------------------------------------------------------
+
 2.1 SPI Bus Sharing
+
 The following modules share the same SPI bus:
+
 .CC1101
+
 .NRF24L01
+
 .LoRa
+
 When sharing the SPI bus, you must ensure that:
+
 .Each module has its own dedicated CS/SS pin
+
 .The CS pin of every inactive module stays HIGH
+
 
 Otherwise, you may run into:
 .Initialization failures
 .Communication conflicts
 .Mutual interference between modules
+
 ------------------------------------------------------------------------
 2.2 Keyboard I2C Pin Multiplexing
+
 The Cardputer keyboard controller TCA8418 uses:
+
 .SDA = GPIO8
+
 .SCL = GPIO9
 
+
 In this setup, the NRF24 also uses these pins:
+
 .CE = GPIO8
+
 .SS = GPIO9
+
 Because of this, the firmware must implement the following logic:
+
 .When the keyboard needs to be accessed, switch GPIO8 / GPIO9 back to I2C mode
+
 .After reading the keyboard event, switch GPIO8 / GPIO9 back to normal GPIO output mode
+
 Otherwise, the keyboard and NRF24 will directly conflict with each other.
+
 
 ------------------------------------------------------------------------
 🛠️ 3. Modify m5stack-cardputer.ini
+
 File path:boards/m5stack-cardputer/m5stack-cardputer.ini
+
 Under build_flags =, add or confirm the following configuration.
 
+
 ------------------------------------------------------------------------
+
 3.1 Add CC1101 Configuration
+
 -DUSE_CC1101_VIA_SPI
+
 -DCC1101_GDO0_PIN=13
+
 -DCC1101_SS_PIN=15
+
 -DCC1101_MOSI_PIN=SPI_MOSI_PIN
+
 -DCC1101_SCK_PIN=SPI_SCK_PIN
+
 -DCC1101_MISO_PIN=SPI_MISO_PIN
+
 ;-DCC1101_GDO2_PIN=-1
+
 Description:
 
+
 GDO0 uses GPIO13
+
 SS uses GPIO15
+
 SPI data lines reuse the default SPI bus
+
 3.2 Add NRF24L01 Configuration
 
+
 -DUSE_NRF24_VIA_SPI
+
 -DNRF24_CE_PIN=8
+
 -DNRF24_SS_PIN=9
+
 -DNRF24_MOSI_PIN=SPI_MOSI_PIN
+
 -DNRF24_SCK_PIN=SPI_SCK_PIN
+
 -DNRF24_MISO_PIN=SPI_MISO_PIN
+
 Description:
 
 CE = GPIO8
+
 SS = GPIO9
+
 These pins are shared with the keyboard I2C bus, so interface.cpp must also be modified
+
 3.3 Add LoRa Configuration
 
+
 -DLORA_SCK=SPI_SCK_PIN
+
 -DLORA_MISO=SPI_MISO_PIN
+
 -DLORA_MOSI=SPI_MOSI_PIN
+
 -DLORA_CS=5
+
 -DLORA_RST=3
+
 -DLORA_DIO0=4
+
 Description:
 
+
 LoRa also reuses the default SPI bus
+
 CS = GPIO5
+
 RST = GPIO3
+
 DIO0 = GPIO4
+
 3.4 Example of the Final Relevant Configuration
+
 Below is the full relevant configuration block after modification:
+
 
 ------------------------------------------------------------------------
 [env:m5stack-cardputer]
@@ -265,144 +343,236 @@ File path:
 
 
 boards/m5stack-cardputer/interface.cpp
+
 The goal here is to let the keyboard I2C pins switch back to I2C mode when needed, and be released as normal GPIO pins when not needed so NRF24 can use them.
+
 
 ------------------------------------------------------------------------
 4.1 Add I2C Pin Switching Functions
+
 Add the following two functions to the file:
 
+
 void setI2cPinsTooutput() {
+
     Wire1.end(); // OFF I2C
+    
     pinMode(TCA8418_SDA_PIN, OUTPUT);
+    
     pinMode(TCA8418_SCL_PIN, OUTPUT);
+    
 }
+
 void setI2cPinsToI2c() {
+
     Wire1.begin(TCA8418_SDA_PIN, TCA8418_SCL_PIN);
+    
     delay(5);
+    
 }
+
 
 Description:
+
 setI2cPinsTooutput()
+
 Disables I2C and switches SDA / SCL to normal output mode
+
 setI2cPinsToI2c()
+
 Reinitializes I2C so the keyboard controller can be accessed again
 
+
 ------------------------------------------------------------------------
+
 4.2 Add I2C Switching in the Keyboard Interrupt Handling Logic
+
 Inside InputHandler(), in the UseTCA8418 branch, add:
 
+
 if (digitalRead(11) == LOW) { setI2cPinsToI2c(); }
+
 Then call the following after reading the keyboard event:
 
 setI2cPinsTooutput();
 
+
 ------------------------------------------------------------------------
 The key code block looks like this:
+
 if (digitalRead(11) == LOW) { setI2cPinsToI2c(); }
 
+
 // try to clear the IRQ flag
+
 // if there are pending events it is not cleared
+
 tca.writeRegister(TCA8418_REG_INT_STAT, 1);
+
 int intstat = tca.readRegister(TCA8418_REG_INT_STAT);
+
 if ((intstat & 0x01) == 0) { kb_interrupt = false; }
 
+
 // if (tca.available() <= 0) return;
+
 int keyEvent = tca.getEvent();
+
 bool pressed = (keyEvent & 0x80); // Bit 7: 1 Pressed, 0 Released
+
 uint8_t value = keyEvent & 0x7F;  // Bits 0-6: key value
 
+
 setI2cPinsTooutput();
+
 4.3 Recommended Placement
+
 For cleaner structure, it is recommended to place these functions after getKeyChar() and before handleSpecialKeys():
 
+
 char getKeyChar(uint8_t row, uint8_t col) {
+
     char keyVal;
+    
     if (shift_key_pressed ^ caps_lock) {
+    
         keyVal = _key_value_map[row][col].value_second;
+        
     } else {
+    
         keyVal = _key_value_map[row][col].value_first;
+        
     }
+    
     return keyVal;
+    
 }
 
 void setI2cPinsTooutput() {
+
     Wire1.end(); // OFF I2C
+    
     pinMode(TCA8418_SDA_PIN, OUTPUT);
+    
     pinMode(TCA8418_SCL_PIN, OUTPUT);
+    
 }
 
 void setI2cPinsToI2c() {
+
     Wire1.begin(TCA8418_SDA_PIN, TCA8418_SCL_PIN);
+    
     delay(5);
+    
 }
+
 
 ------------------------------------------------------------------------
 4.4 What This Change Does
+
 After this change, the workflow becomes:
 
 By default, GPIO8 / GPIO9 are released for external modules
+
 When a keyboard interrupt is detected:
+
 Temporarily restore I2C mode
+
 Read the key event from TCA8418
+
 After reading:
+
 Disable I2C
+
 Release the pins again
+
 This helps reduce the conflict between the keyboard controller and NRF24.
+
 
 ------------------------------------------------------------------------
 📡 5. Modify nrf_common.cpp to Avoid SPI Conflicts
+
 File path:
 
 
 src/modules/NRF24/nrf_common.cpp
+
 Since CC1101 and NRF24 share the SPI bus, it is recommended to force the CC1101 chip select pin HIGH before initializing NRF24. This ensures that CC1101 will not incorrectly respond to SPI traffic.
 
 ------------------------------------------------------------------------
+
 5.1 Add the Following Code to nrf_start()
+
 At the beginning of the function, add:
 
 
+
 pinMode(15, OUTPUT);
+
 digitalWrite(15, HIGH);
+
 The modified code block looks like this:
+
 
 
 bool nrf_start(NRF24_MODE mode) {
 
+
     bool result = false;
+    
     pinMode(15, OUTPUT);
+    
     digitalWrite(15, HIGH);
+    
 
     if (mode == NRF_MODE_DISABLED) return false;
 
 ------------------------------------------------------------------------
 5.2 What This Does
+
 Here, GPIO15 is the SS pin assigned to CC1101:
 
 -DCC1101_SS_PIN=15
+
 So before initializing NRF24, the following is executed:
 
+
 pinMode(15, OUTPUT);
+
 digitalWrite(15, HIGH);
+
 This ensures that:
 
 CC1101 remains deselected
+
 CC1101 does not interfere with the SPI bus
+
 NRF24 initialization becomes more reliable
+
 
 ------------------------------------------------------------------------
 ✅ 6. Summary
+
 This modification allows Bruce firmware on M5Stack Cardputer to support:
 
+
 CC1101
+
 NRF24L01
+
 LoRa
+
 It does so by:
 
 Adding board-level pin definitions
+
 Implementing keyboard I2C / GPIO multiplexing
+
 Releasing CC1101 chip select before NRF24 initialization
+
 The two most important points are:
 
 Handling the GPIO8 / GPIO9 multiplexing between the keyboard and NRF24
+
 Keeping all inactive SPI device chip select pins HIGH
+
