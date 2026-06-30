@@ -1,3 +1,10 @@
+After installing the firmware, you need to reset the system. Here is the reset method.
+
+config>System Config>Advanced>Factory Reset
+
+<img width="355" height="241" alt="ScreenShot_2026-06-26_103803_777" src="https://github.com/user-attachments/assets/cd859393-abe0-4028-96b0-43dfcc9bd47b" />
+
+
 # Cardputer-ADV-CC1101-NRF24L01-LoRa
 
 ![9082439408](https://github.com/user-attachments/assets/f7679754-3829-4d2e-b69f-2b8fac79e70f)
